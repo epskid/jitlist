@@ -1,3 +1,5 @@
+#![feature(impl_trait_in_assoc_type)]
+
 //! the most efficient data structure in the world. now available on only one platform.
 
 #[cfg(not(target_arch = "x86_64"))]
@@ -11,11 +13,13 @@ compile_error!(
 #[cfg(test)]
 mod tests;
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::mem;
 use std::ops::{Index, IndexMut};
 
 use dynasmrt::dynasm;
-use dynasmrt::{AssemblyOffset, DynasmApi, DynasmLabelApi, ExecutableBuffer, x64::Assembler};
+use dynasmrt::{AssemblyOffset, DynasmApi, DynasmLabelApi, x64::Assembler};
 
 /// the titular [JITList]
 pub struct JITList<T> {
@@ -24,6 +28,7 @@ pub struct JITList<T> {
     jmp_retu_offset: Option<AssemblyOffset>,
     len: usize,
     list: Vec<T>,
+    removed: BinaryHeap<Reverse<usize>>,
 }
 
 impl<T> JITList<T> {
@@ -53,6 +58,7 @@ impl<T> JITList<T> {
             jmp_retu_offset: None,
             len: list.len(),
             list,
+            removed: BinaryHeap::new(),
         })
     }
 
@@ -65,6 +71,12 @@ impl<T> JITList<T> {
     #[inline(always)]
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    /// check if a [JITList] is empty
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
     #[inline(always)]
@@ -80,6 +92,17 @@ impl<T> JITList<T> {
         self.check_index(index64);
 
         let index: i32 = index64.try_into()?;
+
+        if !self.removed.is_empty() {
+            let reader = self.assembler.reader();
+            let reader_lock = reader.lock();
+            let func: extern "C" fn(i32) -> i32 =
+                unsafe { mem::transmute(reader_lock.ptr(self.func_offset)) };
+
+            self.removed.push(Reverse(func(index) as usize));
+        } else {
+            self.removed.push(Reverse(index64));
+        }
 
         self.len -= 1;
 
@@ -132,15 +155,19 @@ impl<T> JITList<T> {
     fn get_real_index(&self, index: usize) -> usize {
         self.check_index(index);
 
-        let reader = self.assembler.reader();
-        let result = {
-            let reader_lock = reader.lock();
-            let func: extern "C" fn(i32) -> i32 =
-                unsafe { mem::transmute(reader_lock.ptr(self.func_offset)) };
-            func(index.try_into().expect("so you have a list that's more than a terabyte in size? seems like you're in the wrong here."))
-        };
+        if !self.removed.is_empty() {
+            let reader = self.assembler.reader();
+            let result = {
+                let reader_lock = reader.lock();
+                let func: extern "C" fn(i32) -> i32 =
+                    unsafe { mem::transmute(reader_lock.ptr(self.func_offset)) };
+                func(index.try_into().expect("so you have a list that's more than a terabyte in size? seems like you're in the wrong here."))
+            };
 
-        result.try_into().expect("so....... the jit messed up.")
+            result.try_into().expect("so....... the jit messed up.")
+        } else {
+            index
+        }
     }
 }
 
@@ -162,46 +189,51 @@ impl<T> IndexMut<usize> for JITList<T> {
 
 impl<T> IntoIterator for JITList<T> {
     type Item = T;
-    type IntoIter = JITListIterator<T>;
+    type IntoIter = impl Iterator<Item = Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
-        JITListIterator {
-            assembled: self
-                .assembler
-                .finalize()
-                .expect("failed to finalize assembly"),
-            func_offset: self.func_offset,
-            inner: self.list.into_iter(),
-            index: 0,
-        }
+        let mut removed = self.removed;
+        self.list.into_iter().enumerate().filter_map(move |(i, x)| {
+            if removed.peek().is_some_and(|j| j.0 == i) {
+                removed.pop();
+                None
+            } else {
+                Some(x)
+            }
+        })
     }
 }
 
-/// an iterator for the [JITList]
-pub struct JITListIterator<T> {
-    assembled: ExecutableBuffer,
-    func_offset: AssemblyOffset,
-    inner: std::vec::IntoIter<T>,
-    index: usize,
+impl<'a, T> IntoIterator for &'a JITList<T> {
+    type Item = &'a T;
+    type IntoIter = impl Iterator<Item = Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let mut removed = self.removed.clone();
+        self.list.iter().enumerate().filter_map(move |(i, x)| {
+            if removed.peek().is_some_and(|j| j.0 == i) {
+                removed.pop();
+                None
+            } else {
+                Some(x)
+            }
+        })
+    }
 }
 
-impl<T> Iterator for JITListIterator<T> {
-    type Item = T;
+impl<'a, T> IntoIterator for &'a mut JITList<T> {
+    type Item = &'a mut T;
+    type IntoIter = impl Iterator<Item = Self::Item>;
 
-    #[inline]
-    fn next(&mut self) -> Option<T> {
-        let result = self.inner.next();
-        let func: extern "C" fn(i32) -> i32 =
-            unsafe { mem::transmute(self.assembled.ptr(self.func_offset)) };
-
-        let mut real_index = func(self.index as i32) + 1;
-        let real_next_index = func(self.index as i32 + 1);
-        while real_index < real_next_index {
-            real_index += 1;
-            self.inner.next();
-        }
-        self.index = real_index as usize;
-
-        result
+    fn into_iter(self) -> Self::IntoIter {
+        let mut removed = self.removed.clone();
+        self.list.iter_mut().enumerate().filter_map(move |(i, x)| {
+            if removed.peek().is_some_and(|j| j.0 == i) {
+                removed.pop();
+                None
+            } else {
+                Some(x)
+            }
+        })
     }
 }
