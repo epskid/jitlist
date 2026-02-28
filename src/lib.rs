@@ -194,11 +194,13 @@ impl<T> Iterator for JITListIterator<T> {
         let func: extern "C" fn(i32) -> i32 =
             unsafe { mem::transmute(self.assembled.ptr(self.func_offset)) };
 
+        let mut real_index = func(self.index as i32) + 1;
         let real_next_index = func(self.index as i32 + 1);
-        while (func(self.index as i32) + 1) < real_next_index {
-            self.index += 1;
+        while real_index < real_next_index {
+            real_index += 1;
             self.inner.next();
         }
+        self.index = real_index as usize;
 
         result
     }

@@ -1,5 +1,5 @@
 # jitlist
-pronounced "hitlist". it's the epitome of data structures. optimized for optimization.
+pronounced "hitlist", like the name "jose". it's the epitome of data structures. optimized for optimization.
 
 ## seriously
 that bit about being optimized for optimization is true. it's for optimizing a list of bytecode instructions by removal and replacement.
