@@ -1,7 +1,7 @@
 [package]
 description = "blazingly fast revolutionary data structure"
 name = "jitlist"
-version = "0.0.0-sigma.67+DO-NOT-USE-THIS"
+version = "0.0.0-yogurt.67+DO-NOT-USE-THIS"
 edition = "2024"
 readme = "README.md"
 repository = "https://github.com/epskid/jitlist"
