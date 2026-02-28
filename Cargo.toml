@@ -1,8 +1,13 @@
 [package]
 description = "blazingly fast revolutionary data structure"
 name = "jitlist"
-version = "0.1.0"
+version = "0.0.0-sigma.67+DO-NOT-USE-THIS"
 edition = "2024"
+readme = "README.md"
+repository = "https://github.com/epskid/jitlist"
+license-file = "LICENSE"
+keywords = ["epic", "cool", "great", "amazing", "awful"]
+categories = ["data-structures"]
 
 [dependencies]
 anyhow = "1.0.102"
